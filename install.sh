@@ -3,7 +3,7 @@
 #   ./install.sh [workspace]     workspace defaults to the cockpit's parent folder
 # - links bin/ into ~/.local/bin, hooks/ into ~/.claude/hooks, the status line to ~/.claude/statusline.sh
 # - registers the hooks, the status line and the mods in plugins/ (env CLAUDE_CODE_PLUGIN_DIRS) in
-#   ~/.claude/settings.json (adds only what is missing)
+#   ~/.claude/settings.json (adds what is missing, drops mods removed from plugins/)
 # - installs and starts the systemd user timer claude-jobs.timer and the service cockpit-web.service
 #   (restarted, so it runs the current code)
 # - sources shell/bashrc.sh from ~/.bashrc
@@ -97,7 +97,7 @@ settings=~/.claude/settings.json
 [ -f "$settings" ] || echo '{}' > "$settings"
 tmp=$(mktemp)
 plugins=$(for d in "$here"/plugins/*/; do [ -d "$d" ] && echo "${d%/}"; done | jq -R . | jq -s .)
-jq --argjson plugins "$plugins" '
+jq --argjson plugins "$plugins" --arg dir "$here" '
   def add(ev; cmd): .hooks[ev] = ((.hooks[ev] // []) as $h
     | if any($h[]?.hooks[]?; .command == cmd) then $h else $h + [{hooks: [{type: "command", command: cmd}]}] end);
   add("SessionStart"; "~/.claude/hooks/session-name.sh")
@@ -107,7 +107,8 @@ jq --argjson plugins "$plugins" '
   | add("UserPromptSubmit"; "~/.claude/hooks/repo-pull.sh")
   | .hooks.UserPromptSubmit |= map(select(all(.hooks[]?; .command != "~/.claude/hooks/clear-prompt.sh")))   # dropped hook
   | .statusLine //= {type: "command", command: "~/.claude/statusline.sh", refreshInterval: 30}
-  | .env.CLAUDE_CODE_PLUGIN_DIRS = ((.env.CLAUDE_CODE_PLUGIN_DIRS // "" | split(":") | map(select(. != ""))) as $have
+  | .env.CLAUDE_CODE_PLUGIN_DIRS = ((.env.CLAUDE_CODE_PLUGIN_DIRS // "" | split(":")
+      | map(select(. != "" and (startswith($dir + "/plugins/") | not) or (. as $d | $plugins | index($d))))) as $have
       | $have + ($plugins - $have) | join(":"))
 ' "$settings" > "$tmp"
 if ! cmp -s "$tmp" "$settings"; then cp "$settings" "$settings.bak"; mv "$tmp" "$settings"; echo "updated $settings (backup: settings.json.bak)"
