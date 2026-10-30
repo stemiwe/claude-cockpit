@@ -26,10 +26,47 @@ const log = atom({ plugin: 'worklog', key: 'log' } as const, [] as LogEntry[])
 const prompts = new Map<string, string>()   // turn id -> what was asked
 let seated = false                          // pane re-opened on the first prompt
 
-const plain = (s: string) => s.replace(/\*\*|`/g, '').replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+// Markdown links stay in: the pane draws them, bare URLs and file paths as clickable links with short text (OSC 8,
+// so they stay clickable when they wrap)
+const plain = (s: string) => s.replace(/\*\*|`/g, '')
+const LINK = /\[([^\]]+)\]\(([^)\s]+)\)|https?:\/\/[^\s<>"')\]]+[^\s<>"')\].,;:!?]|(?:~\/|\/)?[\w.-]+(?:\/[\w.@-]+)*\/[\w@-][\w.@-]*\.[A-Za-z0-9]{1,5}\b/g
+let wsRoot = ''                             // the workspace, for paths relative to it
+const home = () => wsRoot.replace(/^(\/home\/[^/]+|\/root)\/.*$/, '$1')
+// The pieces of a text: plain strings and links, each link with its target and short label
+type Piece = string | { href: string; label: string }
+const pieces = (s: string): Piece[] => {
+  const out: Piece[] = []
+  let at = 0
+  for (const m of s.matchAll(LINK)) {
+    const [all, text, url] = m
+    let href = '', label = ''
+    if (url) { href = url; label = text }
+    else if (/^https?:/.test(all)) {
+      href = all
+      const u = all.replace(/^https?:\/\/(www\.)?/, '').replace(/[?#].*$/, '').replace(/\/$/, '')
+      const parts = u.split('/')
+      label = parts.length > 2 ? `${parts[0]}/…/${parts[parts.length - 1]}` : u
+      if (label.length > 40) label = label.slice(0, 39) + '…'
+    } else {
+      const abs = all.startsWith('/') ? all : all.startsWith('~/') ? home() + all.slice(1) : wsRoot ? `${wsRoot}/${all}` : ''
+      if (!abs) continue
+      href = 'file://' + encodeURI(abs)
+      label = all.split('/').pop() || all
+    }
+    if (m.index! > at) out.push(s.slice(at, m.index))
+    out.push({ href, label })
+    at = m.index! + all.length
+  }
+  if (at < s.length) out.push(s.slice(at))
+  return out
+}
+// The text as drawn: each link as its label
+const shown = (s: string) => pieces(s).map(p => typeof p === 'string' ? p : p.label).join('')
 const oneLine = (s: string, n: number) => {
   const t = plain(s).replace(/\s+/g, ' ').trim()
-  return t.length > n ? t.slice(0, n - 1) + '…' : t
+  if (shown(t).length <= n) return t
+  const d = shown(t)                        // too long: cut the drawn text (its links become plain text)
+  return d.slice(0, n - 1) + '…'
 }
 // First sentence of a reply: what was done
 const firstSentence = (s: string) => oneLine(s.split(MARKER)[0].split(/(?<=[.!?])\s|\n\n/)[0] ?? '', 160)
@@ -85,6 +122,7 @@ async function project($: EngineInterface, cwd: string) {
     try { conf = JSON.parse(await $.fs.read(`${ws}/cockpit.json`)); break } catch { ws = ws.replace(/\/[^/]+$/, '') || '/' }
   }
   if (!conf) return undefined
+  wsRoot = ws
   const rel = cwd === ws ? (conf.name || ws.split('/').pop() || '')
     : cwd.slice(ws.length + 1).split('/').slice(0, conf.depth ?? 2).join('/')
   return { ws, conf, rel }
@@ -219,7 +257,8 @@ export const register: Register = on => {
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
-    const { Box, Text } = $.ui.resolve(e)
+    const { Box, Text, Link } = $.ui.resolve(e)
+    const linked = (s: string) => pieces(s).map(p => typeof p === 'string' ? p : <Link href={p.href}>{p.label}</Link>)
     const st = await read($, status)
     const q = (await read($, detail)) || (await read($, question))
     const td = await read($, todos)
@@ -230,21 +269,21 @@ export const register: Register = on => {
     const tLines = td.flatMap(t => t.split('\n'))
     // Rows the wrapped texts take; the log gets what's left
     const width = Math.max(10, (e.viewport?.columns ?? 40) - 2)
-    const rows = (ls: string[]) => ls.reduce((n, l) => n + Math.max(1, Math.ceil(l.length / width)), 0)
+    const rows = (ls: string[]) => ls.reduce((n, l) => n + Math.max(1, Math.ceil(shown(l).length / width)), 0)
     const used = 6 + 2 * Math.max(1, cu.length) + rows(qLines.length ? qLines : ['-']) + rows(tLines.length ? tLines.map(l => '• ' + l) : ['-']) + rows([st || '—'])
     const room = Math.max(1, (e.viewport?.rows ?? 30) - used)
     return (
       <Box flexDirection="column">
         <Text bold color="red">❓ Your turn</Text>
         {qLines.length === 0 ? <Text dimColor>nothing open</Text>
-          : qLines.map(l => l.startsWith('  ') ? <Text wrap="wrap">{l}</Text> : <Text wrap="wrap" bold>{l}</Text>)}
+          : qLines.map(l => l.startsWith('  ') ? <Text wrap="wrap">{linked(l)}</Text> : <Text wrap="wrap" bold>{linked(l)}</Text>)}
         <Text> </Text>
         <Text bold color="magenta">☐ To-dos</Text>
         {td.length === 0 ? <Text dimColor>none</Text>
-          : tLines.map(l => l.startsWith('  ') ? <Text wrap="wrap">{l}</Text> : <Text wrap="wrap">• {l}</Text>)}
+          : tLines.map(l => l.startsWith('  ') ? <Text wrap="wrap">{linked(l)}</Text> : <Text wrap="wrap">• {linked(l)}</Text>)}
         <Text> </Text>
         <Text bold color="cyan">Status</Text>
-        <Text wrap="wrap">{st || '—'}</Text>
+        <Text wrap="wrap">{st ? linked(st) : '—'}</Text>
         <Text> </Text>
         {cu.length ? cu.flatMap((c, k) => {
           const n = k === cu.length - 1 ? room - Math.floor(room / cu.length) * k : Math.floor(room / cu.length)
@@ -252,7 +291,7 @@ export const register: Register = on => {
             ...(k ? [<Text> </Text>] : []),
             <Text bold color="yellow">{c.title}</Text>,
             ...(c.lines.length === 0 ? [<Text dimColor>empty</Text>]
-              : c.lines.slice(0, Math.max(1, n)).map(l => <Text wrap="truncate-end">• {l}</Text>)),
+              : c.lines.slice(0, Math.max(1, n)).map(l => <Text wrap="truncate-end">• {linked(l)}</Text>)),
           ]
         }) : [
           <Text bold color="yellow">Log</Text>,
