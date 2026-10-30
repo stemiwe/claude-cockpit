@@ -209,6 +209,22 @@ export const register: Register = on => {
     await update($, status, () => '')
     refresh($, e.cwd)
     void $.ui.open({ id: PANE, title: TITLE })
+    // Another pane (e.g. one restored on /restart) can take the front right after the start: for 10 s, bring the
+    // log back to the front once that happens
+    void (async () => {
+      for (let i = 0; i < 10; i++) {
+        await $.clock.sleep(1000)
+        const p = (await $.ui.panes()).find(x => x.id === PANE)
+        if (!p) return                       // closed by hand
+        if (p.isPlaced && !p.isShown) {
+          await $.ui.open({ id: PANE, title: TITLE })
+          if (!(await $.ui.panes()).find(x => x.id === PANE)?.isShown) {
+            await $.ui.close({ id: PANE }); await $.ui.open({ id: PANE, title: TITLE })
+          }
+          return
+        }
+      }
+    })().catch(() => {})
     return next(e)
   })
 
