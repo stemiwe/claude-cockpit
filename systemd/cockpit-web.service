@@ -1,5 +1,8 @@
 [Unit]
 Description=Cockpit dashboard as a local web page (cockpit-web)
+# No implicit After=basic.target: KDE's drkonqi-sentry-postman.path forms an ordering cycle through it, and
+# systemd then dropped this service at login
+DefaultDependencies=no
 
 [Service]
 ExecStart=%h/.local/bin/cockpit-web serve
