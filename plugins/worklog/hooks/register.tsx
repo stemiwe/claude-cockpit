@@ -1,28 +1,26 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { LogEntry, PanePart } from '../types'
+import type { PanePart } from '../types'
 
 // Side pane: the open "❓ Your turn" block of the last reply, each action spelled out from the whole reply by a small
 // model (what to do, where, why; the bare block until it answers), the project's open to-dos with their detail lines
-// (cockpit.json "todo_file", section "## <project>"), the project's Status: line, and one log line per turn: its
-// topic in a few words (summarised by a small model; until it answers, or if it fails, the start of the prompt).
-// The log gets only the rows left over. cockpit.json "panes" replaces the log with lines from files: "panes":
+// (cockpit.json "todo_file", section "## <project>"), the project's Status: line, and in the rows left over the
+// project's important points: lines from files, set in cockpit.json "panes":
 // {"<project>": <part or list of parts>, "*": <default for projects without their own>}; a part is {"title", "file"
 // (path from the workspace, "{project}" = the project's path), "section" (regex for a "## " heading: only the lines
 // under it, "{project}" allowed), "match" (regex for the lines to show; its capture groups, if any, are shown joined
 // by " · "), "fallback": true (shown only when no other part has lines)}. Without "match": the "## " headings, else the
 // top-level items. Re-read each turn; parts with nothing
-// to show are left out, and with none left (and a list or the default) the log comes back.
+// to show are left out. No panes set, or none with lines: "Open", the project CLAUDE.md's "## Open" section.
 const PANE = 'worklog'
-const TITLE = 'Work log'
+const TITLE = 'Work pane'
 const MARKER = '❓ **Your turn:**'
 const status = atom({ plugin: 'worklog', key: 'status' } as const, '')
 const question = atom({ plugin: 'worklog', key: 'question' } as const, '')
 const detail = atom({ plugin: 'worklog', key: 'detail' } as const, '')
 const todos = atom({ plugin: 'worklog', key: 'todos' } as const, [] as string[])
 const custom = atom({ plugin: 'worklog', key: 'custom' } as const, [] as PanePart[])
-const log = atom({ plugin: 'worklog', key: 'log' } as const, [] as LogEntry[])
 const prompts = new Map<string, string>()   // turn id -> what was asked
 let seated = false                          // pane re-opened on the first prompt
 
@@ -67,20 +65,6 @@ const oneLine = (s: string, n: number) => {
   if (shown(t).length <= n) return t
   const d = shown(t)                        // too long: cut the drawn text (its links become plain text)
   return d.slice(0, n - 1) + '…'
-}
-// First sentence of a reply: what was done
-const firstSentence = (s: string) => oneLine(s.split(MARKER)[0].split(/(?<=[.!?])\s|\n\n/)[0] ?? '', 160)
-const hhmm = () => new Date().toTimeString().slice(0, 5)
-
-// Topic of a turn in a few words, by a small model; undefined if it doesn't answer
-async function topicOf($: EngineInterface, asked: string, reply: string) {
-  const r = await $.model.complete({
-    model: 'haiku', maxTokens: 30,
-    system: 'You label conversation turns for a work log. Answer with the topic only: at most 8 words, no ' +
-      'full sentence, no quotes, no trailing period, in the language of the request.',
-    prompt: `Request:\n${oneLine(asked, 600)}\n\nReply:\n${oneLine(reply.split(MARKER)[0], 800)}`,
-  })
-  return r.isAnswered ? oneLine(r.text.split('\n')[0].replace(/^["'„]|["'“]$|\.$/g, ''), 70) : undefined
 }
 
 // The "Your turn" actions of a reply spelled out, so they can be done without scrolling up; undefined if no answer
@@ -128,12 +112,13 @@ async function project($: EngineInterface, cwd: string) {
   return { ws, conf, rel }
 }
 
-// The project's own pane parts instead of the log (cockpit.json "panes"), or none
-async function readCustom($: EngineInterface, cwd: string) {
+// The project's important points: cockpit.json "panes", else its CLAUDE.md "## Open" section; empty "Open" if nothing
+const OPEN: Part = { title: 'Open', file: '{project}/CLAUDE.md', section: '^Open' }
+async function readCustom($: EngineInterface, cwd: string): Promise<PanePart[]> {
   const p = await project($, cwd)
-  const own = p?.conf.panes?.[p.rel]
-  const pane = own ?? p?.conf.panes?.['*']
-  if (!p || !pane) return []
+  if (!p) return []
+  const own = p.conf.panes?.[p.rel]
+  const pane = own ?? p.conf.panes?.['*'] ?? OPEN
   const list = Array.isArray(pane)
   const fill = (x: string) => x.split('{project}').join(p.rel)
   const out: PanePart[] = [], spare: PanePart[] = []
@@ -172,7 +157,7 @@ async function readCustom($: EngineInterface, cwd: string) {
     } catch { lines = ['(bad "match" regex)'] }
     if (lines.length || (!list && own)) (part.fallback ? spare : out).push({ title, lines })
   }
-  return out.length ? out : spare
+  return out.length ? out : spare.length ? spare : [{ title: 'Open', lines: [] }]   // never empty
 }
 
 // Open to-dos of the session's project: the open "- [ ]" lines under "## <project>" (a " — suffix" on the heading
@@ -205,12 +190,12 @@ const refresh = ($: EngineInterface, cwd: string) => {
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
-    await $.command.register({ name: 'worklog', description: 'Show the work log pane (status, open questions, log)' })
+    await $.command.register({ name: 'worklog', description: 'Show the work pane (open questions, to-dos, status, important points)' })
     await update($, status, () => '')
     refresh($, e.cwd)
     void $.ui.open({ id: PANE, title: TITLE })
     // Another pane (e.g. one restored on /restart) can take the front right after the start: for 10 s, bring the
-    // log back to the front once that happens
+    // work pane back to the front once that happens
     void (async () => {
       for (let i = 0; i < 10; i++) {
         await $.clock.sleep(1000)
@@ -230,7 +215,7 @@ export const register: Register = on => {
 
   on('command.run', { command: 'worklog' }, async $ => {
     await $.ui.open({ id: PANE, title: TITLE })
-    return { text: 'Work log pane opened.' }
+    return { text: 'Work pane opened.' }
   })
 
   // Opened unasked at session start, the pane waits undrawn on a narrow terminal; the first prompt
@@ -261,13 +246,6 @@ export const register: Register = on => {
     prompts.delete(e.turnId)
     if (block) void detailOf($, asked, text, block).then(d => d && read($, question).then(q =>
       q === block ? update($, detail, () => d) : undefined)).catch(() => {})
-    const did = e.reason === 'answer' ? firstSentence(text) : e.reason
-    if (asked || did) {
-      const time = hhmm()
-      await update($, log, l => [...l, { time, asked: oneLine(asked, 100), did }].slice(-100))
-      void topicOf($, asked, text).then(topic => topic && update($, log, l =>
-        l.map(en => en.time === time && en.did === did && !en.topic ? { ...en, topic } : en))).catch(() => {})
-    }
     refresh($, $.session.cwd())
     return done
   })
@@ -278,12 +256,11 @@ export const register: Register = on => {
     const st = await read($, status)
     const q = (await read($, detail)) || (await read($, question))
     const td = await read($, todos)
-    const entries = await read($, log)
     const cu0 = await read($, custom)
     const cu = Array.isArray(cu0) ? cu0 : []   // an older session may still hold the one-part form
     const qLines = q ? q.split('\n').filter(l => l.trim()) : []
     const tLines = td.flatMap(t => t.split('\n'))
-    // Rows the wrapped texts take; the log gets what's left
+    // Rows the wrapped texts take; the important points get what's left
     const width = Math.max(10, (e.viewport?.columns ?? 40) - 2)
     const rows = (ls: string[]) => ls.reduce((n, l) => n + Math.max(1, Math.ceil(shown(l).length / width)), 0)
     const used = 6 + 2 * Math.max(1, cu.length) + rows(qLines.length ? qLines : ['-']) + rows(tLines.length ? tLines.map(l => '• ' + l) : ['-']) + rows([st || '—'])
@@ -301,21 +278,15 @@ export const register: Register = on => {
         <Text bold color="cyan">Status</Text>
         <Text wrap="wrap">{st ? linked(st) : '—'}</Text>
         <Text> </Text>
-        {cu.length ? cu.flatMap((c, k) => {
+        {cu.flatMap((c, k) => {
           const n = k === cu.length - 1 ? room - Math.floor(room / cu.length) * k : Math.floor(room / cu.length)
           return [
             ...(k ? [<Text> </Text>] : []),
             <Text bold color="yellow">{c.title}</Text>,
-            ...(c.lines.length === 0 ? [<Text dimColor>empty</Text>]
+            ...(c.lines.length === 0 ? [<Text dimColor>nothing yet (CLAUDE.md "## Open")</Text>]
               : c.lines.slice(0, Math.max(1, n)).map(l => <Text wrap="truncate-end">• {linked(l)}</Text>)),
           ]
-        }) : [
-          <Text bold color="yellow">Log</Text>,
-          ...(entries.length === 0 ? [<Text dimColor>nothing yet</Text>]
-            : entries.slice(-room).map(en => (
-              <Text wrap="truncate-end"><Text dimColor>{en.time}</Text> {en.topic || en.asked || '(continued)'}</Text>
-            ))),
-        ]}
+        })}
       </Box>
     )
   })

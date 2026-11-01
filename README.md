@@ -85,7 +85,7 @@ A terminal cockpit for running many Claude Code sessions side by side, one per p
 | `lib/presence` | `push` / `fetch` / `show` / `usage`: this and the other machines' running sessions and token counts (branches `cockpit-presence/<host>`, one parentless commit each, force-pushed) |
 | `hooks/sort-tabs.sh` | sorts the Konsole tabs of the current window |
 | `hooks/statusline.sh` | Claude Code status line |
-| `plugins/worklog/` | Claude Code mod: side pane with the project's status, the open `Your turn:` questions and a work log (or, with `cockpit.json` "panes", lines from files per project, "*" = default: e.g. rules, open points, chores, ideas); `/worklog` reopens it; `"panes": {"<project>": {"title", "file", "match"}}` in `cockpit.json` shows a file's matching lines (default `## ` headings) instead of the log |
+| `plugins/worklog/` | Claude Code mod: side pane with the open `Your turn:` questions, the project's to-dos and status, and its important points: the `## Open` section of its `CLAUDE.md`, or with `cockpit.json` "panes" lines from files per project ("*" = default: e.g. rules, open points, chores, ideas; `{"title", "file", "section", "match"}`, default `## ` headings); `/worklog` reopens it |
 | `shell/bashrc.sh` | sourced from `~/.bashrc`: dashboard-opened tabs start `claude`, the hook's DASH tab starts `dashboard`; `/exit` closes the tab |
 | `lib/env.sh` | shared shell helpers: workspace location, session names, colours |
 | `lib/konsole-app` | runs Konsole as its own app (a copy of the binary named after the launcher), so Plasma's taskbar shows its windows under that launcher, not under Konsole |
