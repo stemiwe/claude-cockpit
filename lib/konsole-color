@@ -16,7 +16,7 @@ profile() {   # writes the profile for colour $1, prints its name
   parent=$(sed -n 's/^DefaultProfile=//p' "${XDG_CONFIG_HOME:-$HOME/.config}/konsolerc" 2>/dev/null)
   if [ -n "$parent" ] && [ -f "$pdir/$parent" ]; then parent="$pdir/$parent"; else parent=FALLBACK/; fi
   mkdir -p "$pdir"
-  printf '[General]\nName=cockpit-%s\nParent=%s\nTabColor=%d,%d,%d\n\n[Interaction Options]\nAllowEscapedLinks=true\nUnderlineFilesEnabled=true\nUnderlineLinksEnabled=true\n' "$hex" "$parent" \
+  printf '[General]\nName=cockpit-%s\nParent=%s\nTabColor=%d,%d,%d\n\n[Interaction Options]\nAllowEscapedLinks=true\nUnderlineFilesEnabled=true\nUnderlineLinksEnabled=true\n\n[Keyboard]\nKeyBindings=cockpit\n' "$hex" "$parent" \
     "0x${hex:0:2}" "0x${hex:2:2}" "0x${hex:4:2}" > "$pdir/cockpit-$hex.profile.tmp"
   cmp -s "$pdir/cockpit-$hex.profile.tmp" "$pdir/cockpit-$hex.profile" && rm "$pdir/cockpit-$hex.profile.tmp" \
     || mv "$pdir/cockpit-$hex.profile.tmp" "$pdir/cockpit-$hex.profile"

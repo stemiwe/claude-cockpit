@@ -114,6 +114,21 @@ if [ "$(jq -r '.pin_launchers // false' "$ws/cockpit.json" 2>/dev/null)" = true 
       w.reloadConfig();
     }));' >/dev/null 2>&1 && echo "pinned the launchers to the taskbar" || echo "warning: could not pin the launchers (Plasma not running?)" >&2
 fi
+# Shift+Enter = newline in Claude Code: Konsole's default sends ESC O M there, which Claude Code takes as Enter.
+# The cockpit keytab sends ESC CR (Alt+Enter) instead; the default profile uses it (a "Cockpit" profile when
+# there is none; an existing one only gets it if it names no key bindings of its own).
+mkdir -p ~/.local/share/konsole
+ln -sfn "$here/konsole/cockpit.keytab" ~/.local/share/konsole/cockpit.keytab
+if command -v kwriteconfig6 >/dev/null; then
+  dp=$(kreadconfig6 --file konsolerc --group "Desktop Entry" --key DefaultProfile)
+  if [ -z "$dp" ] || [ ! -f ~/.local/share/konsole/"$dp" ]; then
+    dp=Cockpit.profile
+    printf '[General]\nName=Cockpit\nParent=FALLBACK/\n\n[Interaction Options]\nAllowEscapedLinks=true\nUnderlineFilesEnabled=true\nUnderlineLinksEnabled=true\n\n[Keyboard]\nKeyBindings=cockpit\n' > ~/.local/share/konsole/$dp
+    kwriteconfig6 --file konsolerc --group "Desktop Entry" --key DefaultProfile "$dp"
+  elif [ -z "$(kreadconfig6 --file ~/.local/share/konsole/"$dp" --group Keyboard --key KeyBindings)" ]; then
+    kwriteconfig6 --file ~/.local/share/konsole/"$dp" --group Keyboard --key KeyBindings cockpit
+  fi
+fi
 "$here/lib/konsole-color" --profiles '#FF0096'   # tab colour profiles (Konsole without setTabColor); #FF0096 = dashboard
 
 # settings.json: one hook entry per event, added only if no entry runs that command yet
