@@ -24,12 +24,14 @@ A terminal cockpit for running many Claude Code sessions side by side, one per p
   launchers to pin to the taskbar, each with its own icon, named after the workspace (`name` in `cockpit.json`,
   else "Claude"): **<name>** (`cockpit`, the sessions' window) and **<name> dashboard**. `"icons": {"cockpit": …, "dashboard": …}` (SVG or PNG,
   relative to the workspace) replaces their icons. With `"pin_launchers": true` in
-  `cockpit.json`, every install run pins them to the first two slots of each Plasma task manager. Konsole's `--desktopfile` gives their windows their own Wayland app id, so they don't
-  group under Konsole. Clicking a project raises the window holding its tab (KWin script, `lib/kwin-activate`).
+  `cockpit.json`, every install run pins them to the first two slots of each Plasma task manager. Konsole's `--desktopfile` plus KWin window rules (`kwinrulesrc`, groups `cockpit-claude-*`, set by
+  `install.sh`) give their windows their own app id, so they don't group under Konsole or with each other. Clicking a project raises the window holding its tab (KWin script, `lib/kwin-activate`).
 - **Start** (`cockpit`): opens a Konsole window with the root session only (its last conversation resumed with
   `claude --resume` if it was open before) and the dashboard (web or window); project sessions start from the
   dashboard or via the root session. If the root session runs, its window comes to the front; `cockpit list` shows what it would open. With `"remote_control": true` in `cockpit.json`, the root
-  session starts with Remote Control on, named after the workspace (reachable from the Claude apps).
+  session starts with Remote Control on, named after the workspace (reachable from the Claude apps). Each session starts with its own
+  `--model`: `"models": {"<project or parent>": "<model>"}` in `cockpit.json`, else the default at start
+  (`lib/session-model`), so `/model` in one session doesn't switch the others.
 - **Tabs**: each session is named after its folder (at most two levels deep, like the dashboard rows) and gets its tab title and colour automatically. Tabs
   are kept sorted: DASH, the root, projects A–Z, unnamed tabs last. Leaving `claude` closes its tab.
 - **Status line**: model, context use, rate limits (▲ = used faster than the window passes), estimated
@@ -88,6 +90,7 @@ A terminal cockpit for running many Claude Code sessions side by side, one per p
 | `plugins/worklog/` | Claude Code mod: side pane with the open `Your turn:` questions, the project's to-dos and status, and its important points: the `## Open` section of its `CLAUDE.md`, or with `cockpit.json` "panes" lines from files per project ("*" = default: e.g. rules, open points, chores, ideas; `{"title", "file", "section", "match"}`, default `## ` headings); `/worklog` reopens it |
 | `shell/bashrc.sh` | sourced from `~/.bashrc`: dashboard-opened tabs start `claude`, the hook's DASH tab starts `dashboard`; `/exit` closes the tab |
 | `lib/env.sh` | shared shell helpers: workspace location, session names, colours |
+| `lib/session-model` | the model a session starts with: cockpit.json `"models"` (longest matching path), else the current default from `~/.claude/settings.json`; `shell/bashrc.sh` passes it as `--model`, so `/model` in one session no longer moves the others |
 | `lib/konsole-app` | runs Konsole as its own app (a copy of the binary named after the launcher), so Plasma's taskbar shows its windows under that launcher, not under Konsole |
 | `lib/konsole-color` | colours a Konsole tab: `setTabColor`, or on Konsole 26.08+ (no `setTabColor`) a generated profile `cockpit-RRGGBB` per colour in `~/.local/share/konsole/` (new colours show after a Konsole restart) |
 | `systemd/` | `claude-jobs.service` / `.timer` |

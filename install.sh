@@ -77,6 +77,26 @@ label=$(jq -r '.name // empty' "$ws/cockpit.json" 2>/dev/null); label=${label:-C
 desktop claude-cockpit "$label" "Claude Code sessions of the workspace (opens the root session)" "$HOME/.local/bin/cockpit"
 desktop claude-dashboard "$label dashboard" "Live view of every project" "$HOME/.local/bin/dashboard --window"
 command -v kbuildsycoca6 >/dev/null && kbuildsycoca6 >/dev/null 2>&1 || true
+# KWin rules force each window's desktop file (Konsole's --desktopfile no longer reaches the Wayland app id;
+# without this both windows share org.kde.konsole and the grouped taskbar merges them into one icon)
+if command -v kwriteconfig6 >/dev/null; then
+  for app in claude-cockpit claude-dashboard; do
+    g="cockpit-$app"
+    kwriteconfig6 --file kwinrulesrc --group "$g" --key Description "cockpit: $app taskbar icon"
+    kwriteconfig6 --file kwinrulesrc --group "$g" --key wmclass "$app org.kde.konsole"
+    kwriteconfig6 --file kwinrulesrc --group "$g" --key wmclasscomplete true
+    kwriteconfig6 --file kwinrulesrc --group "$g" --key wmclassmatch 1
+    kwriteconfig6 --file kwinrulesrc --group "$g" --key desktopfile "$app"
+    kwriteconfig6 --file kwinrulesrc --group "$g" --key desktopfilerule 2
+  done
+  rules=$(kreadconfig6 --file kwinrulesrc --group General --key rules)
+  for g in cockpit-claude-cockpit cockpit-claude-dashboard; do
+    [[ ",$rules," == *",$g,"* ]] || rules=${rules:+$rules,}$g
+  done
+  kwriteconfig6 --file kwinrulesrc --group General --key rules "$rules"
+  kwriteconfig6 --file kwinrulesrc --group General --key count "$(tr ',' '\n' <<<"$rules" | grep -c .)"
+  command -v qdbus6 >/dev/null && qdbus6 org.kde.KWin /KWin reconfigure >/dev/null 2>&1 || true
+fi
 # cockpit.json "pin_launchers": true pins both to the first two slots of every Plasma task manager (each run)
 if [ "$(jq -r '.pin_launchers // false' "$ws/cockpit.json" 2>/dev/null)" = true ] && command -v qdbus6 >/dev/null; then
   qdbus6 org.kde.plasmashell /PlasmaShell org.kde.PlasmaShell.evaluateScript '

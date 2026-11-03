@@ -2,8 +2,13 @@
 # Leaving an interactive claude session (/exit) closes the tab too, unless claude failed. Only for
 # plain interactive runs typed at a prompt: not -p/--print, --version, --help or subcommands.
 # A session ended by claude-restart (/restart) is resumed instead: its id is in ~/.cache/claude/restart/<this shell's pid>.
+# Interactive sessions in the workspace start with their own --model (lib/session-model: cockpit.json "models",
+# else the current default), so /model in one session doesn't move the others along.
 claude() {
-  local args=("$@") rc m="$HOME/.cache/claude/restart/$$" x skip a
+  local args=("$@") rc m="$HOME/.cache/claude/restart/$$" x skip a model
+  if [[ -z $1 || $1 == -* ]] && [[ " $* " != *" --model "* && " $* " != *" --model="* ]]; then
+    model=$("${BASH_SOURCE[0]%/*}/../lib/session-model" 2>/dev/null) && [[ -n $model ]] && args=(--model "$model" "${args[@]}")
+  fi
   while :; do
     command claude "${args[@]}"; rc=$?
     [[ -f $m ]] || break

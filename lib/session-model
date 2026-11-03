@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# session-model [dir]: the model a Claude session started in dir (default $PWD) gets, for shell/bashrc.sh.
+# cockpit.json "models": {"<session name or parent path>": "<model>", …} (longest matching path wins; the root
+# under its name). Without an entry: the model in ~/.claude/settings.json at start. Pinning it with --model keeps
+# the session on it when /model in another session rewrites the shared settings.json. Prints nothing outside
+# the workspace or when no model is set anywhere.
+. "$(dirname "$(readlink -f "$0")")/env.sh"
+p=$(ws_rel "${1:-$PWD}"); [ -n "$p" ] || exit 0
+while :; do
+  m=$(jq -r --arg p "$p" '.models[$p] // empty' "$conf" 2>/dev/null)
+  [ -n "$m" ] && { echo "$m"; exit 0; }
+  [[ $p == */* ]] || break
+  p=${p%/*}
+done
+jq -r '.model // empty' "$HOME/.claude/settings.json" 2>/dev/null
