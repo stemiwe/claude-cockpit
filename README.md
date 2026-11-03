@@ -148,6 +148,9 @@ installer links as `qdbus6`), Claude Code, `jq`, Python 3, systemd (user units) 
 - `job_host`: with several machines on one workspace, the hostname that runs the jobs; others run only
   jobs marked `# machines: all`, and take over the rest if the job host's heartbeat
   (`.cockpit/job-host.json`) is older than a day. Unset: every machine runs every job.
+  Jobs marked `# takeover: no` (deploys) never run by takeover. A job's `# needs: secret <service> […];
+  ssh <host>; venv; host <name>` line makes it "unavailable here" (no run, no failure, no alert) on a
+  machine that lacks one (see `bin/claude-jobs`).
 - `aliases` / `old_roots`: renamed folders and earlier workspace locations, so that older transcripts
   still count toward the right project's token use.
 

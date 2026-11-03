@@ -13,7 +13,16 @@ Several machines: with `job_host` (a hostname) in cockpit.json, jobs run only on
 with a line `# machines: all` (per-machine work like pulling and pushing the workspace). The job host
 writes a heartbeat to <workspace>/.cockpit/job-host.json (versioned, so it reaches the other machines);
 when it is older than a day, any machine runs the jobs, so they don't stop while the job host is off.
-Without `job_host`, every job runs on every machine.
+Without `job_host`, every job runs on every machine. A job with `# takeover: no` (e.g. one that deploys)
+runs only on the job host, never by takeover.
+
+Needs: a line `# needs: <need>; <need>…` makes a job "unavailable here" on a machine that lacks one: it
+doesn't run, counts no failure and raises no alert (list: `unavailable: <need>`). Needs:
+  secret <service> [<attr> <value>]…   a keyring entry (secret-tool lookup service <service> …)
+  ssh <host>                           ssh -o BatchMode=yes <host> true works
+  venv                                 the project has a .venv/
+  host <name>                          only on that machine
+Jobs get the desktop's SSH agent (/run/user/<uid>/gcr/ssh) when SSH_AUTH_SOCK is unset.
 
   claude-jobs                 run all due jobs (what the timer does)
   claude-jobs list            show every job with interval, last run, result and next due time
@@ -42,6 +51,11 @@ SKIP_DIRS = {".git", ".venv", "node_modules"}
 UNITS = {"m": 60, "h": 3600, "d": 86400}
 HOST = os.uname().nodename
 HEARTBEAT = ROOT / ".cockpit/job-host.json"
+NEEDS = {}              # job id -> ([need, …], takeover forbidden), filled by find_jobs
+_probed = {}
+GCR_SSH = f"/run/user/{os.getuid()}/gcr/ssh"
+if not os.environ.get("SSH_AUTH_SOCK") and os.path.exists(GCR_SSH):
+    os.environ["SSH_AUTH_SOCK"] = GCR_SSH   # the desktop's SSH agent, for jobs and the ssh probe
 STALE = 86400           # job host silent this long -> the other machines take over
 
 def find_jobs():
@@ -64,6 +78,10 @@ def find_jobs():
             if m and not archived(f.parent.parent):
                 project = str(f.parent.parent.relative_to(ROOT)) if f.parent.parent != ROOT else ROOT.name
                 every_machine = any(re.search(r"#\s*machines:\s*all\b", l) for l in head)
+                NEEDS[f"{project}/{f.name}"] = (
+                    [n.split() for l in head for mm in [re.search(r"#\s*needs:\s*(.+)", l)] if mm
+                     for n in mm.group(1).split(";") if n.split()],
+                    any(re.search(r"#\s*takeover:\s*no\b", l) for l in head))
                 yield f"{project}/{f.name}", f, int(m.group(1)) * UNITS[m.group(2)], every_machine
 
 try:
@@ -86,6 +104,41 @@ def single_jobs_here():
     try: beat = json.loads(HEARTBEAT.read_text())
     except (OSError, ValueError): return True
     return beat.get("host") != JOB_HOST or time.time() - beat.get("ts", 0) > STALE
+
+def probe(need, project_dir):
+    """True if this machine meets one need (see the docstring); cached per run."""
+    key = (tuple(need), project_dir if need[0] == "venv" else None)
+    if key in _probed: return _probed[key]
+    kind, args = need[0], need[1:]
+    try:
+        if kind == "secret" and args:
+            ok = bool(subprocess.run(["secret-tool", "lookup", "service", *args], capture_output=True,
+                                     text=True, timeout=20).stdout.strip())
+        elif kind == "ssh" and len(args) == 1:
+            ok = subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8", args[0], "true"],
+                                stdin=subprocess.DEVNULL, capture_output=True, timeout=20).returncode == 0
+        elif kind == "venv":
+            ok = (project_dir / ".venv").is_dir()
+        elif kind == "host" and len(args) == 1:
+            ok = HOST == args[0]
+        else:
+            ok = True   # unknown need: don't block the job
+    except (OSError, subprocess.TimeoutExpired):
+        ok = False
+    _probed[key] = ok
+    return ok
+
+def unavailable(job_id, path):
+    """The first need this machine lacks, as text, else None."""
+    for need in NEEDS.get(job_id, ([], False))[0]:
+        if not probe(need, path.parent.parent): return " ".join(need)
+    return None
+
+def runs_here(job_id, every_machine, here):
+    """Whether the job runs on this machine (job host, takeover, `# takeover: no`)."""
+    if every_machine: return True
+    if NEEDS.get(job_id, ([], False))[1] and JOB_HOST and HOST != JOB_HOST: return False
+    return here
 
 def archived(project_dir):
     """True if the project's CLAUDE.md has a "Status: archived …" line (rules C1): its jobs don't run."""
@@ -144,18 +197,23 @@ def main():
     jobs = list(find_jobs())
     if args[:1] == ["list"]:
         here = single_jobs_here()
+        miss = {j: unavailable(j, p) for j, p, _, em in jobs if runs_here(j, em, here)}
         if args[1:2] == ["--json"]:
             print(json.dumps([{"id": job_id, "project": job_id.rsplit("/", 1)[0], "every": every,
                                "last": state.get(job_id, {}).get("last"), "ok": state.get(job_id, {}).get("ok"),
                                "rc": state.get(job_id, {}).get("rc"), "fails": state.get(job_id, {}).get("fails", 0),
-                               "next": due_at(job_id, every, state) if every_machine or here else None,
-                               "host": None if every_machine or here else JOB_HOST}
+                               "next": due_at(job_id, every, state) if runs_here(job_id, every_machine, here)
+                                       and not miss.get(job_id) else None,
+                               "host": None if runs_here(job_id, every_machine, here) else JOB_HOST,
+                               "unavailable": miss.get(job_id)}
                               for job_id, path, every, every_machine in jobs]))
             return
         for job_id, path, every, every_machine in jobs:
             s = state.get(job_id, {})
             res = "never run" if not s else ("ok" if s.get("ok") else f"FAILED ({s.get('rc')}) ×{s.get('fails', 1)}")
-            nxt = (fmt(due_at(job_id, every, state)) if s else "now") if every_machine or here else f"on {JOB_HOST}"
+            nxt = (f"unavailable: {miss[job_id]}" if miss.get(job_id) else
+                   (fmt(due_at(job_id, every, state)) if s else "now")) if runs_here(job_id, every_machine, here) \
+                else f"on {JOB_HOST}"
             print(f"{job_id:40} every {every // 3600}h{every % 3600 // 60:02d}m  last {fmt(s.get('last'))}  "
                   f"{res:16}  next {nxt}")
         return
@@ -176,7 +234,8 @@ def main():
     except subprocess.TimeoutExpired: pass
     now, here = time.time(), single_jobs_here()
     for job_id, path, every, every_machine in jobs:
-        if (every_machine or here) and due_at(job_id, every, state) <= now:
+        if runs_here(job_id, every_machine, here) and due_at(job_id, every, state) <= now \
+                and not unavailable(job_id, path):
             run(job_id, path, state)
 
 main()

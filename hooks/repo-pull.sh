@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# UserPromptSubmit hook: before Claude answers, bring the git repo of the session's folder up to date with
-# what other machines pushed. At most once a minute per repo; the fetch gives up after a few seconds (SSH in
+# UserPromptSubmit hook: bring the git repo of the session's folder up to date with what other machines
+# pushed. At most once a minute per repo, in the background (the prompt never waits for the network); what a
+# pull brought in is told to Claude on the next prompt. The fetch gives up after a few seconds (SSH in
 # batch mode, so a locked key fails at once). Fast-forward only: a repo with local commits is left for the
 # sync job, and so are incoming files that have local changes here. Claude is told what came in.
 # When the workspace repo itself moved, cockpit.json "after_pull" (a command relative to the workspace) runs
@@ -15,13 +16,16 @@ git -C "$top" remote get-url origin >/dev/null 2>&1 || exit 0
 cache="$HOME/.cache/claude/repo-pull"; mkdir -p "$cache"
 log="$HOME/.cache/claude/repo-pull.log"
 stamp="$cache/$(printf %s "$top" | md5sum | cut -c1-16)"
+# Report what the previous background pull of this repo brought in, once
+[ -s "$stamp.news" ] && { cat "$stamp.news"; rm -f "$stamp.news"; }
 [ -f "$stamp" ] && [ $(( $(date +%s) - $(stat -c %Y "$stamp") )) -lt 60 ] && exit 0
 touch "$stamp"
-exec 9>"$(git -C "$top" rev-parse --absolute-git-dir)/repo-pull.lock"; flock -w 5 9 || exit 0
 
-say() {   # $1 = context for Claude, $2 = one line for the user
-  jq -nc --arg c "$1" --arg m "$2" '{systemMessage: $m, hookSpecificOutput: {hookEventName: "UserPromptSubmit", additionalContext: $c}}'
+say() {   # $1 = context for Claude, $2 = one line for the user; kept for the next prompt
+  jq -nc --arg c "$1" --arg m "$2" '{systemMessage: $m, hookSpecificOutput: {hookEventName: "UserPromptSubmit", additionalContext: $c}}' > "$stamp.news"
 }
+pull() {
+exec 9>"$(git -C "$top" rev-parse --absolute-git-dir)/repo-pull.lock"; flock -n 9 || exit 0
 name=${top#"$ws"/}; [ "$top" = "$ws" ] && name=$ws_name
 up="refs/remotes/origin/$branch"
 GIT_SSH_COMMAND="ssh -o BatchMode=yes -o ConnectTimeout=3" GIT_TERMINAL_PROMPT=0 \
@@ -31,8 +35,8 @@ if ! git -C "$top" merge-base --is-ancestor HEAD "$up"; then
   echo "$(date -Is) $top: local commits, left for the sync job" >>"$log"; exit 0
 fi
 incoming=$(git -C "$top" diff --name-only HEAD "$up")
-overlap=$(comm -12 <(sort <<<"$incoming") \
-                   <({ git -C "$top" diff --name-only HEAD; git -C "$top" ls-files -o --exclude-standard; } | sort -u))
+overlap=$(LC_ALL=C comm -12 <(LC_ALL=C sort <<<"$incoming") \
+                   <({ git -C "$top" diff --name-only HEAD; git -C "$top" ls-files -o --exclude-standard; } | LC_ALL=C sort -u))
 if [ -n "$overlap" ]; then
   echo "$(date -Is) $top: not pulled, local changes to incoming files: $overlap" >>"$log"
   sha=$(git -C "$top" rev-parse "$up")
@@ -50,5 +54,8 @@ if [ "$top" = "$ws" ]; then
   [ -n "$after" ] && (cd "$ws" && timeout 60 $after <<<"$incoming" >>"$log" 2>&1)
 fi
 n=$(git -C "$top" rev-list --count "$old..HEAD")
-say "Git: just pulled $n commit(s) from another machine into $top before this prompt: $(git -C "$top" log --format=%s "$old..HEAD" | head -5 | paste -sd';' | sed 's/;/; /g'). Changed files: $(head -30 <<<"$incoming" | paste -sd, | sed 's/,/, /g'). Re-read any of them you had read before." \
+say "Git: since the last prompt, pulled $n commit(s) from another machine into $top: $(git -C "$top" log --format=%s "$old..HEAD" | head -5 | paste -sd';' | sed 's/;/; /g'). Changed files: $(head -30 <<<"$incoming" | paste -sd, | sed 's/,/, /g'). Re-read any of them you had read before." \
     "git: pulled $n commit(s) into $name"
+}
+( pull ) </dev/null >/dev/null 2>>"$log" &
+exit 0

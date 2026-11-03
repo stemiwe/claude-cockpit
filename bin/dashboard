@@ -272,6 +272,7 @@ def last_action(sid, cwd):
 
 REGISTRY = {"busy": "busy", "shell": "monitoring", "waiting": "question"}   # Claude Code's own session states
 QDIR = ROOT / ".cockpit/questions"   # saved questions, one file per session (hooks/session-state.sh)
+QTTL = 7 * 86400                      # saved questions older than this are dropped
 ORPHANS = {}   # row -> session id of a saved question whose session isn't running, refreshed every frame
 ACTIONS = {}   # row -> last tool call of its most recently active running session, refreshed every frame
 ASKING = {}    # row -> pids of its running sessions with a question, so a click goes to the right tab
@@ -318,6 +319,8 @@ def live_states(row_paths):
     for f in sorted(QDIR.glob("*.json"), key=lambda f: f.stat().st_mtime, reverse=True):
         try:
             q = json.loads(f.read_text())
+            if time.time() - q.get("asked", time.time()) > QTTL:   # a week unanswered: drop it
+                f.unlink(); continue
             row = row_for(str(ROOT if q["project"] == "." else ROOT / q["project"]), row_paths)
             if not row: continue
             live.setdefault(row, set()).add("question")
