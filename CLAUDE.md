@@ -1,6 +1,11 @@
 # Claude cockpit
 
-Status: dashboard, tab handling, status line and job runner work; first shared version
+Status: dashboard, tabs, hooks, job runner (needs/takeover), per-session models; own session since 2026-11-03
+
+## Open
+- Live state (`.cockpit/questions`, job-host heartbeat) still in the workspace repo: move to presence branches (optimizer 2026-11-03 #10)
+- hugobox: job runner has no SSH agent/secrets yet; `job_host` stays schachmaschine until it does
+- Konsole `--desktopfile` no longer sets the app id: KWin rules (install.sh) cover it
 
 The generic cockpit for running Claude Code sessions per project in Konsole tabs: the dashboard TUI, the hooks,
 the status line and the job runner. The rules the sessions follow are a separate repo (`<workspace>/rules/`,
@@ -9,7 +14,7 @@ install it are in `README.md`.
 
 - **Keep it generic.** Colleagues at work use this repo too. Nothing about one person, machine or workspace
   goes in here, no names, paths or colours: those belong in the workspace's `cockpit.json` and `CLAUDE.md`.
-- It's worked on from the workspace's root session (rules C5). The dashboard counts this folder as the root.
+- It's worked on from its own session in this folder (rules C5); other sessions send their requests here (C7).
 - Shell scripts find the workspace through `lib/env.sh`; the two Python scripts each carry a copy of `workspace()`
   (`python3 -I` can't import from the script's folder).
 - Every workspace pulls this repo on each prompt (`hooks/cockpit-pull.sh`), so push finished work: what is
