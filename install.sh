@@ -29,7 +29,11 @@ for cmd in jq python3 qdbus6; do command -v "$cmd" >/dev/null || echo "warning: 
 
 mkdir -p ~/.config/claude-cockpit ~/.local/bin ~/.claude/hooks ~/.config/systemd/user
 echo "$ws" > ~/.config/claude-cockpit/workspace
-[ -f "$ws/cockpit.json" ] || cp "$here/cockpit.example.json" "$ws/cockpit.json"
+# the example only for a new workspace: a cockpit.json tracked in git that is missing for a moment (a pull or
+# rebase in progress) must not be replaced by it
+if [ ! -f "$ws/cockpit.json" ] && ! git -C "$ws" ls-files --error-unmatch cockpit.json >/dev/null 2>&1; then
+  cp "$here/cockpit.example.json" "$ws/cockpit.json"
+fi
 
 rd=$(jq -r '.rules // "rules"' "$ws/cockpit.json" 2>/dev/null); rd=${rd:-rules}   # the rules folder, relative to the workspace
 rules_repo=${CLAUDE_RULES_REPO:-}
