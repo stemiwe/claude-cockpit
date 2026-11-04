@@ -1,5 +1,0 @@
-# Scratch space and local environments
-tmp/
-.venv/
-__pycache__/
-*.pyc
