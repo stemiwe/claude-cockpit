@@ -23,6 +23,8 @@ const todos = atom({ plugin: 'worklog', key: 'todos' } as const, [] as string[])
 const custom = atom({ plugin: 'worklog', key: 'custom' } as const, [] as PanePart[])
 const prompts = new Map<string, string>()   // turn id -> what was asked
 let seated = false                          // pane re-opened on the first prompt
+const DIFF = 'diff'                         // the built-in diff panel's pane id
+let diffAsked = false                       // the person opened the diff panel with /diff
 
 // Markdown links stay in: the pane draws them, bare URLs and file paths as clickable links with short text (OSC 8,
 // so they stay clickable when they wrap)
@@ -217,6 +219,16 @@ export const register: Register = on => {
     await $.ui.open({ id: PANE, title: TITLE })
     return { text: 'Work pane opened.' }
   })
+
+  // The built-in diff panel opens itself on the first edit and takes the front: refused, so the work pane stays in
+  // front; /diff still opens it, and from then until it closes it is left alone
+  on('command.run', { command: 'diff' }, ($, e, next) => { diffAsked = true; return next(e) })
+  on('ui.close', { id: DIFF }, async ($, e, next) => {
+    const closed = await next(e)
+    if (closed.deny === undefined) diffAsked = false
+    return closed
+  })
+  on('ui.open', { id: DIFF }, ($, e, next) => diffAsked ? next(e) : { deny: 'the work pane stays in front; /diff opens it' })
 
   // Opened unasked at session start, the pane waits undrawn on a narrow terminal; the first prompt
   // counts as the person asking, so it seats then at any width (unless they closed it by hand)
