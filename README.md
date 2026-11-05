@@ -152,6 +152,8 @@ installer links as `qdbus6`), Claude Code, `jq`, Python 3, systemd (user units) 
   Jobs marked `# takeover: no` (deploys) never run by takeover. A job's `# needs: secret <service> […];
   ssh <host>; venv; host <name>` line makes it "unavailable here" (no run, no failure, no alert) on a
   machine that lacks one (see `bin/claude-jobs`).
+- `job_takeover` (default `true`): `false` turns takeover off, so machines other than `job_host` run only
+  `# machines: all` jobs, however old the heartbeat is; the rest wait until the job host is back.
 - `aliases` / `old_roots`: renamed folders and earlier workspace locations, so that older transcripts
   still count toward the right project's token use.
 

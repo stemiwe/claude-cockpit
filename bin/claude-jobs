@@ -14,7 +14,8 @@ with a line `# machines: all` (per-machine work like pulling and pushing the wor
 writes a heartbeat to <workspace>/.cockpit/job-host.json (versioned, so it reaches the other machines);
 when it is older than a day, any machine runs the jobs, so they don't stop while the job host is off.
 Without `job_host`, every job runs on every machine. A job with `# takeover: no` (e.g. one that deploys)
-runs only on the job host, never by takeover.
+runs only on the job host, never by takeover. `"job_takeover": false` in cockpit.json turns takeover off for
+all jobs: the other machines then run only `# machines: all` jobs, however old the heartbeat is.
 
 Needs: a line `# needs: <need>; <need>…` makes a job "unavailable here" on a machine that lacks one: it
 doesn't run, counts no failure and raises no alert (list: `unavailable: <need>`). Needs:
@@ -90,6 +91,7 @@ except (OSError, ValueError):
     CONFIG = {}
 HIDDEN = set(CONFIG.get("hidden", []))   # skipped folders
 JOB_HOST = CONFIG.get("job_host", "")
+JOB_TAKEOVER = CONFIG.get("job_takeover", True)
 
 def single_jobs_here():
     """Whether jobs without `# machines: all` run on this machine (see the docstring)."""
@@ -101,6 +103,7 @@ def single_jobs_here():
             HEARTBEAT.parent.mkdir(parents=True, exist_ok=True)
             HEARTBEAT.write_text(json.dumps({"host": HOST, "ts": int(time.time())}) + "\n")
         return True
+    if not JOB_TAKEOVER: return False
     try: beat = json.loads(HEARTBEAT.read_text())
     except (OSError, ValueError): return True
     return beat.get("host") != JOB_HOST or time.time() - beat.get("ts", 0) > STALE
