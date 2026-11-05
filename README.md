@@ -86,7 +86,7 @@ A terminal cockpit for running many Claude Code sessions side by side, one per p
 | `hooks/repo-pull.sh` | UserPromptSubmit hook: pulls the session's repo before Claude answers (see above); log `~/.cache/claude/repo-pull.log` |
 | `lib/presence` | `push` / `fetch` / `show` / `usage`: this and the other machines' running sessions and token counts (branches `cockpit-presence/<host>`, one parentless commit each, force-pushed) |
 | `hooks/sort-tabs.sh` | sorts the Konsole tabs of the current window |
-| `hooks/statusline.sh` | Claude Code status line |
+| `hooks/statusline.sh` | Claude Code status line; in red, every session open on this machine that has a question |
 | `plugins/worklog/` | Claude Code mod: side pane with the open `Your turn:` questions, the project's to-dos and status, and its important points: the `## Open` section of its `CLAUDE.md`, or with `cockpit.json` "panes" lines from files per project ("*" = default: e.g. rules, open points, chores, ideas; `{"title", "file", "section", "match"}`, default `## ` headings); `/worklog` reopens it |
 | `shell/bashrc.sh` | sourced from `~/.bashrc`: dashboard-opened tabs start `claude`, the hook's DASH tab starts `dashboard`; `/exit` closes the tab |
 | `lib/env.sh` | shared shell helpers: workspace location, session names, colours |

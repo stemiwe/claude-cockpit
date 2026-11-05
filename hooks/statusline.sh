@@ -144,10 +144,22 @@ hex=$(ws_color "$dir"); hex=${hex#\#}
 [[ $hex =~ ^[0-9A-Fa-f]{6}$ ]] && LOGO=$'\e[40;38;2;'"$((16#${hex:0:2}));$((16#${hex:2:2}));$((16#${hex:4:2}))m"
 right=$(( cols - MARGIN - ${#logo1} ))  # column where the logo starts
 
+# Every session open on this machine that has a question right now (state files of hooks/session-state.sh; a
+# dead pid or one reused by another program doesn't count), by session name
+asking=$(jq -r 'select(.state == "question" or .state == "input") | "\(.pid) \(.cwd)"' ~/.cache/claude/sessions/*.json 2>/dev/null |
+  while read -r qpid qcwd; do
+    [[ $(cat "/proc/$qpid/comm" 2>/dev/null) == claude ]] || continue
+    start=$(jq -r '.cwd // empty' ~/.claude/sessions/"$qpid".json 2>/dev/null)   # the folder it started in, as in its name
+    name=$(ws_rel "${start:-$qcwd}"); echo "${name:-$(basename "${start:-$qcwd}")}"
+  done | sort -u | paste -sd, | sed 's/,/, /g')
+[[ -n $asking ]] && asking="question: $asking"
+
 if (( right >= ${#plain} + 1 )); then
   printf '%s%*s%s\n' "$out" $(( right - ${#plain} )) "" "${LOGO}${logo1}${RESET}"
+  (( ${#asking} > right - 3 )) && asking="${asking:0:right-4}…"   # stays clear of the logo
   # Claude Code trims leading whitespace, so lead with a braille blank (U+2800): invisible, not trimmed
-  printf '%s%*s%s\n' "${RESET}⠀" $(( right - 1 )) "" "${LOGO}${logo2}${RESET}"
+  printf '%s%*s%s\n' "${RESET}⠀${RED}${asking}${RESET}" $(( right - 1 - ${#asking} )) "" "${LOGO}${logo2}${RESET}"
 else
   printf '%s\n' "$out"
+  [[ -n $asking ]] && printf '%s\n' "${RED}${asking}${RESET}"
 fi
