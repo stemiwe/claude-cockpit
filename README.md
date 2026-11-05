@@ -143,6 +143,7 @@ installer links as `qdbus6`), Claude Code, `jq`, Python 3, systemd (user units) 
 - `hidden`: folders that the dashboard and the job runner skip.
 - `depth` (default 2): how deep dashboard rows go. Deeper projects, e.g. worktrees in `group/repo/worktree`,
   count toward their ancestor at that depth.
+- `categories`: rows shown in another category tab than their folder says, e.g. `{"cockpit": "system"}`.
 - `hidden_tabs`: dashboard category tabs to leave out (e.g. `other`: the root and projects directly in the
   workspace); their running sessions still show in Active.
 - `job_host`: with several machines on one workspace, the hostname that runs the jobs; others run only

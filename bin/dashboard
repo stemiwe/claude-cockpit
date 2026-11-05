@@ -106,7 +106,8 @@ def load_rows():
 def is_archived(status): return status.lower().startswith("archived")
 
 OTHER = "other"                 # category of projects directly in the workspace, and of the root
-def category(rel): return rel.split("/", 1)[0] if "/" in rel else OTHER
+def category(rel):              # cockpit.json "categories": {row: tab} puts a row into another tab
+    return CONF.get("categories", {}).get(rel) or (rel.split("/", 1)[0] if "/" in rel else OTHER)
 
 def views(all_rows):
     """Active, one tab per category (A–Z, "other" last), Agenda (with "agenda_file"), To-dos, Commands;
