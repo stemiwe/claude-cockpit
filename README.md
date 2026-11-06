@@ -46,7 +46,7 @@ A terminal cockpit for running many Claude Code sessions side by side, one per p
   reads it. A shorter way to type `secret-tool store --label=… service …`. With `vault` set in `cockpit.json`
   and the 1Password CLI (`op`, app integration on), every secret is also kept in that 1Password vault:
   `secret push` copies the keyring into it, `secret pull` fills a new machine's keyring from it, and
-  `secret get` falls back to it. Jobs still read the keyring, so they run without 1Password. With a 1Password **service account** limited to that vault (its token stored by
+  `secret get` falls back to it. `secret local <name>` stores a secret in the keyring only, and `secret push` skips it. Jobs still read the keyring, so they run without 1Password. With a 1Password **service account** limited to that vault (its token stored by
   `secret set op-service-account vault <vault>`, keyring only), `op` never asks to unlock 1Password.
 - **Git before every answer**: each prompt first pulls the session's own repo (at most once a minute, a few
   seconds at most, fast-forward only, never over local changes) and tells Claude which files came in.
@@ -79,7 +79,7 @@ A terminal cockpit for running many Claude Code sessions side by side, one per p
 | `lib/kwin-activate` | raises a window by pid via a one-off KWin script (Wayland) |
 | `icons/` | launcher icons (`claude-cockpit`, `claude-dashboard`) |
 | `bin/tab-color` | set a project's tab colour in `cockpit.json` and apply it to the tab |
-| `bin/secret` | short form of `secret-tool`: `secret set/get/del <service> [attr value]…`, `push`/`pull` to 1Password |
+| `bin/secret` | short form of `secret-tool`: `secret set/local/get/del <service> [attr value]…`, `push`/`pull` to 1Password |
 | `hooks/session-name.sh` | SessionStart hook: session/tab name, tab colour, tab sorting, opens the dashboard tab if the window has none |
 | `hooks/session-state.sh` | records each session's live state for the dashboard (`~/.cache/claude/sessions/`) and saves open questions apart from the session in `<workspace>/.cockpit/questions/` (versioned, so they move between machines) |
 | `hooks/cockpit-pull.sh` | UserPromptSubmit hook: pulls the cockpit in the background (at most once a minute, fast-forward only, never over local changes), re-runs `install.sh` when the pull touched it, `systemd/` or `plugins/`, reports the update on the next prompt; log `~/.cache/claude/cockpit-pull.log` |
