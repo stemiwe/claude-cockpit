@@ -5,6 +5,8 @@ Status: dashboard, tabs, hooks, job runner (needs/takeover), per-session models;
 ## Open
 - Live state (`.cockpit/questions`, job-host heartbeat) still in the workspace repo: move to presence branches
 - Konsole `--desktopfile` no longer sets the app id: KWin rules (install.sh) cover it
+- Sessions on another machine: left click in a real Konsole untested; messaging between machines only via Remote Control, unverified
+- A remote session shows in presence only after its first prompt, so the never-twice guard misses it until then
 
 ## Setup
 
