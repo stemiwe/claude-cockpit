@@ -10,9 +10,11 @@ import type { PanePart } from '../types'
 // {"<project>": <part or list of parts>, "*": <default for projects without their own>}; a part is {"title", "file"
 // (path from the workspace, "{project}" = the project's path), "section" (regex for a "## " heading: only the lines
 // under it, "{project}" allowed), "match" (regex for the lines to show; its capture groups, if any, are shown joined
-// by " · "), "fallback": true (shown only when no other part has lines)}. Without "match": the "## " headings, else the
+// by " · "), "align" (with "match": ["left", "right", …], the capture groups as lined-up columns instead), "fallback":
+// true (shown only when no other part has lines)}. Without "match": the "## " headings, else the
 // top-level items. Re-read each turn; parts with nothing
-// to show are left out. No panes set, or none with lines: "Open", the project CLAUDE.md's "## Open" section.
+// to show are left out. No panes set, or none with lines: "Open", the project CLAUDE.md's "## Open" section. Always
+// shown, under "Open": "Setup", the project CLAUDE.md's "## Setup" section.
 const PANE = 'worklog'
 const TITLE = 'Work pane'
 const MARKER = '❓ **Your turn:**'
@@ -96,7 +98,20 @@ async function readStatus($: EngineInterface, cwd: string) {
   return ''
 }
 
-type Part = { title?: string; file?: string; section?: string; match?: string; fallback?: boolean }
+type Part = { title?: string; file?: string; section?: string; match?: string; align?: string[]; fallback?: boolean }
+
+// "align": a line's non-empty capture groups as columns, each padded to its widest cell over all lines; the pane's
+// edge is the only cut
+const cellsOf = (m: RegExpMatchArray | null) =>
+  m ? m.slice(1).filter(x => x && x.trim()).map(x => plain(x).replace(/\s+/g, ' ').trim()) : []
+const columns = (rows: string[][], align: string[]) => {
+  const w: number[] = []
+  for (const r of rows) r.forEach((c, i) => { w[i] = Math.max(w[i] ?? 0, shown(c).length) })
+  return rows.map(r => r.map((c, i) => {
+    const pad = ' '.repeat(w[i] - shown(c).length)
+    return align[i] === 'right' ? pad + c : i === r.length - 1 ? c : c + pad
+  }).join('  '))
+}
 type Conf = { todo_file?: string; name?: string; depth?: number; panes?: Record<string, Part | Part[]> }
 
 // The session's project: the workspace is the nearest folder up with a cockpit.json, the project its path below
@@ -112,6 +127,15 @@ async function project($: EngineInterface, cwd: string) {
   const rel = cwd === ws ? (conf.name || ws.split('/').pop() || '')
     : cwd.slice(ws.length + 1).split('/').slice(0, conf.depth ?? 2).join('/')
   return { ws, conf, rel }
+}
+
+// The lines under the "## " headings that match
+const under = (src: string[], re: RegExp) => {
+  let inside = false
+  return src.filter(l => {
+    if (/^#{1,2} /.test(l)) { inside = /^## /.test(l) && re.test(l.slice(3)); return false }
+    return inside
+  })
 }
 
 // The project's important points: cockpit.json "panes", else its CLAUDE.md "## Open" section; empty "Open" if nothing
@@ -135,12 +159,7 @@ async function readCustom($: EngineInterface, cwd: string): Promise<PanePart[]> 
     let src = text.split('\n')
     try {
       if (part.section) {
-        const re = new RegExp(fill(part.section))
-        let inside = false
-        src = src.filter(l => {
-          if (/^#{1,2} /.test(l)) { inside = /^## /.test(l) && re.test(l.slice(3)); return false }
-          return inside
-        })
+        src = under(src, new RegExp(fill(part.section)))
       }
     } catch { out.push({ title, lines: ['(bad "section" regex)'] }); continue }
     const show = (l: string, m?: RegExpMatchArray | null) => {
@@ -151,7 +170,12 @@ async function readCustom($: EngineInterface, cwd: string): Promise<PanePart[]> 
     try {
       if (part.match) {
         const re = new RegExp(part.match)
-        lines = src.map(l => [l, l.match(re)] as const).filter(([, m]) => m).map(([l, m]) => show(l, m))
+        const hits = src.map(l => [l, l.match(re)] as const).filter(([, m]) => m)
+        if (Array.isArray(part.align)) {
+          const rows = hits.map(([, m]) => cellsOf(m))
+          const cols = columns(rows, part.align)
+          lines = hits.map(([l, m], i) => rows[i].length ? cols[i] : show(l, m))
+        } else lines = hits.map(([l, m]) => show(l, m))
       } else {
         lines = part.section ? [] : src.filter(l => /^## /.test(l)).map(l => show(l))
         if (!lines.length) lines = src.filter(l => /^([-*]|\d+\.) /.test(l)).map(l => show(l))
@@ -159,7 +183,15 @@ async function readCustom($: EngineInterface, cwd: string): Promise<PanePart[]> 
     } catch { lines = ['(bad "match" regex)'] }
     if (lines.length || (!list && own)) (part.fallback ? spare : out).push({ title, lines })
   }
-  return out.length ? out : spare.length ? spare : [{ title: 'Open', lines: [] }]   // never empty
+  const parts = out.length ? out : spare.length ? spare : [{ title: 'Open', lines: [] }]   // never empty
+  // Setup: always shown, under Open, whatever the panes are
+  let md = ''
+  try { md = await $.fs.read(`${cwd === p.ws ? p.ws : `${p.ws}/${p.rel}`}/CLAUDE.md`) } catch {}
+  const setup = under(md.split('\n'), /^Setup/).filter(l => /^([-*]|\d+\.) /.test(l))
+    .map(l => oneLine(l.replace(/^(#+|[-*]|\d+\.)\s*(\[ \]\s*)?/, ''), 200))
+  const open = parts.findIndex(x => x.title === 'Open')
+  parts.splice(open < 0 ? parts.length : open + 1, 0, { title: 'Setup', lines: setup })
+  return parts
 }
 
 // Open to-dos of the session's project: the open "- [ ]" lines under "## <project>" (a " — suffix" on the heading
@@ -295,7 +327,7 @@ export const register: Register = on => {
           return [
             ...(k ? [<Text> </Text>] : []),
             <Text bold color="yellow">{c.title}</Text>,
-            ...(c.lines.length === 0 ? [<Text dimColor>nothing yet (CLAUDE.md "## Open")</Text>]
+            ...(c.lines.length === 0 ? [<Text dimColor>nothing yet (CLAUDE.md "## {c.title}")</Text>]
               : c.lines.slice(0, Math.max(1, n)).map(l => <Text wrap="truncate-end">• {linked(l)}</Text>)),
           ]
         })}
