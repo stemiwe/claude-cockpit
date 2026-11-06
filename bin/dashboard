@@ -26,6 +26,9 @@ current 5h window, the current
 - Click a project name: switches to its Konsole tab (in any window, raised via KWin), or opens a new tab running
   `claude` (`claude --resume <id>` when the row has a saved question whose session isn't running and is on this
   machine): in this window, or from a window of its own in the window holding the root's tab.
+- Right-click a project name: its session runs on another machine (cockpit.json "remote_sessions", set to
+  "remote_host", else "job_host"), shown ">host"; again: back here. A click then opens a tab here attached to it
+  over ssh (bin/cockpit attach). A click on a row "@host" attaches there too, so a project never runs twice.
 - Questions are saved apart from the sessions, in <workspace>/.cockpit/questions/ (versioned with the
   workspace): the row keeps its ❓ across restarts and machines until the user writes in that project again
   or dismisses it.
@@ -361,6 +364,18 @@ def remote_states(row_paths):
             if row and (row not in out or order.index(state) < order.index(out[row][0])):
                 out[row] = (state, host)
     return out
+
+THIS_HOST = os.uname().nodename
+def hosted():
+    """Project -> the other machine its session is set to run on (cockpit.json "remote_sessions")."""
+    return {p: h for p, h in (CONF.get("remote_sessions") or {}).items() if h != THIS_HOST}
+
+def host_of(rel):
+    """The machine a click on this row should reach: one where the project already runs, so it never runs twice,
+    else the one it is set to."""
+    for host, m in _remote["data"].items():
+        if any(s.get("project") == rel for s in m.get("sessions", [])): return host
+    return hosted().get(rel)
 
 USAGE_FILE = HOME / ".cache/claude/usage.json"
 _usage = {"saved": 0, "read": 0, "remote": []}
@@ -735,8 +750,11 @@ def frame():
         lcol = esc(STATES[state]) if state else ""
         if not state and rel in remote:              # only running on another machine
             rstate, host = remote[rel]
-            label = cut(f"@{host}", STATEW - 1); width = len(label)
+            label = cut(f"@{host}", STATEW - 3 if rstate == "question" else STATEW - 1); width = len(label)
             lcol = esc(STATES[rstate]) if rstate in STATES else DIM
+            if rstate == "question": label, width = "❓" + label, width + 2
+        elif not state and rel in hosted():          # set to start on another machine, not running
+            label = cut(f">{hosted()[rel]}", STATEW - 1); width = len(label); lcol = DIM
         if state == "question":                      # shown as "❓" (2 columns wide); keys 1-9 dismiss in row order
             label, width = "❓", 2
             if len(DISMISS) < 9: DISMISS[str(len(DISMISS) + 1)] = qfiles.get(rel, [])
@@ -808,6 +826,15 @@ def raise_window(pid):
     subprocess.Popen([LIB / "kwin-activate", str(pid)], start_new_session=True,
                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
+def set_host(rel):
+    """Right click on a row: its session starts on the default other machine (cockpit.json "remote_host", else
+    "job_host"), or here again. Doesn't touch a session already running."""
+    default = CONF.get("remote_host") or CONF.get("job_host")
+    if not default or default == THIS_HOST: return
+    subprocess.run([Path(__file__).resolve().parent / "cockpit", "remote", rel, "off" if rel in hosted() else default],
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    CONF.clear(); CONF.update(load_conf())
+
 def goto_project(rel):
     """Go to the project's tab (title set by session-name.sh) in any Konsole window and raise that window, or
     open a tab running claude, resuming the session of a saved question, in a cockpit window (APP; never a plain
@@ -830,7 +857,9 @@ def goto_project(rel):
     # Konsole's D-Bus can't run commands in a tab: the new shell starts claude when it finds its folder
     # in this marker, plus the session to resume on a second line (shell/bashrc.sh)
     cwd = str(ROOT if rel == NAME else ROOT / rel)
-    (HOME / ".cache/claude/autostart").write_text(cwd + "\n" + (ORPHANS.get(rel, "") + "\n" if rel in ORPHANS else ""))
+    host = host_of(rel)
+    (HOME / ".cache/claude/autostart").write_text(cwd + "\n" + (f"@{host}\n{rel}\n" if host else
+                                                               ORPHANS.get(rel, "") + "\n" if rel in ORPHANS else ""))
     ours = [w for w in wins if w[3] == APP]       # only cockpit windows: a plain Konsole groups under Konsole
     target = (next((w for w in ours if w[:2] == (own_svc, own_win)), None)
               or next((w for w in ours if tabs_of(w[0], w[1], NAME)), None) or next(iter(ours), None))
@@ -874,6 +903,8 @@ def handle_input(data):
     for b, x, y, kind in MOUSE.findall(data):
         if b in ("64", "65") and kind == "M":                     # mouse wheel
             SCROLL[0] = max(0, SCROLL[0] + (3 if b == "65" else -3)); redraw = False; continue
+        if b == "2" and kind == "M" and VIEW[0] not in ("To-dos", "Agenda") and int(y) - 1 in CLICK:
+            set_host(CLICK[int(y) - 1]); redraw = False; continue # right click: where its session starts
         if b != "0" or kind != "M": continue                      # left button press only
         if any(line == int(y) for line, *_ in TABS):              # tab bar (second line on)
             for line, start, end, name in TABS:

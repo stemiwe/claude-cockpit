@@ -34,10 +34,12 @@ claude() {
 # session to resume (one that was waiting with a question when its process ended).
 _m="$HOME/.cache/claude/autostart"
 if [[ $- == *i* && -f $_m && $(head -n1 "$_m") == "$PWD" && $(( $(date +%s) - $(stat -c %Y "$_m") )) -lt 15 ]]; then
-  _r=$(sed -n 2p "$_m"); rm -f "$_m"; unset _m
-  if [[ -n $_r ]]; then claude --resume "$_r"; else claude; fi
+  _r=$(sed -n 2p "$_m"); _p=$(sed -n 3p "$_m"); rm -f "$_m"; unset _m
+  # "@<host>": the project's session runs on that machine (bin/cockpit attach); the tab ends with it
+  if [[ $_r == @* ]]; then "${BASH_SOURCE[0]%/*}/../bin/cockpit" attach "$_p" "${_r#@}"; exit
+  elif [[ -n $_r ]]; then claude --resume "$_r"; else claude; fi
 fi
-unset _m _r
+unset _m _r _p
 # A tab opened by session-name.sh (no dashboard in the window yet) runs the dashboard
 _m="$HOME/.cache/claude/dashstart"
 if [[ $- == *i* && -f $_m && $(head -n1 "$_m") == "$PWD" && $(( $(date +%s) - $(stat -c %Y "$_m") )) -lt 15 ]]; then

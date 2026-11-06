@@ -7,6 +7,8 @@
 # dashboard or via the root session. If the root session is running, its window comes to the front.
 #   cockpit          start it
 #   cockpit list     show what it would reopen
+#   cockpit remote <project> [<host>|off]   start that project's session on another machine (cockpit.json
+#                    "remote_sessions"), controlled from a tab here; see attach and host-session below
 set -euo pipefail
 here=$(dirname "$(readlink -f "$0")")
 . "$here/../lib/env.sh"
@@ -14,10 +16,78 @@ odir="$HOME/.cache/claude/open"
 
 if [ "${1:-}" = tab ]; then   # inside a new tab: resume the session (or start one); a shell stays if claude fails
   shift
-  # cockpit.json "remote_control": true starts the root session with Remote Control on, named after the workspace
-  rc=; [ "$PWD" = "$ws" ] && [ "$(jq -r '.remote_control // false' "$conf" 2>/dev/null)" = true ] && rc=$ws_name
+  # cockpit.json "remote_control": true starts the root session and sessions run for another machine (host-session)
+  # with Remote Control on, named after the workspace or project: the way other machines' sessions can reach them
+  rc=; if [ "$(jq -r '.remote_control // false' "$conf" 2>/dev/null)" = true ]; then
+    if [ "$PWD" = "$ws" ]; then rc=$ws_name; elif [ -n "${COCKPIT_HOSTED:-}" ]; then rc=$(ws_rel "$PWD"); fi
+  fi
   exec bash -ic 'claude ${1:+--resume "$1"} ${2:+--remote-control "$2"} || exec bash -i' bash "${1:-}" "$rc"
 fi
+
+project_dir() {   # the folder of a session name; refuses anything but a plain path below the workspace
+  [ "$1" = "$ws_name" ] && { echo "$ws"; return; }
+  [[ $1 =~ ^[A-Za-z0-9._/-]+$ && $1 != *..* && $1 != /* ]] || { echo "bad project: $1" >&2; return 1; }
+  echo "$ws/$1"
+}
+live_here() {     # a Claude session of this project runs on this machine (Claude Code's registry, written at start)
+  local f p d
+  for f in "$HOME"/.claude/sessions/*.json; do
+    [ -f "$f" ] || continue
+    read -r p d < <(jq -r '"\(.pid // 0) \(.cwd // "")"' "$f" 2>/dev/null) || continue
+    [ "$(cat "/proc/${p:-0}/comm" 2>/dev/null)" = claude ] && [ "$(ws_rel "$d")" = "$1" ] && return 0
+  done
+  return 1
+}
+
+case "${1:-}" in
+  remote)   # cockpit remote <project> [<host>|off]: where the dashboard starts that project's session
+    project=${2:?project}; project_dir "$project" >/dev/null || exit 2
+    if [ -z "${3:-}" ]; then jq -r --arg p "$project" '.remote_sessions[$p] // "here"' "$conf"; exit 0; fi
+    tmp=$(mktemp "$conf.XXXXXX")
+    if [ "$3" = off ]; then jq --indent 2 --arg p "$project" 'del(.remote_sessions[$p])' "$conf" > "$tmp"
+    else jq --indent 2 --arg p "$project" --arg h "$3" '.remote_sessions[$p] = $h' "$conf" > "$tmp"; fi
+    mv "$tmp" "$conf"; exit 0 ;;
+  attach)   # cockpit attach <project> <host>: in a tab here, the project's session on that host; reconnects when the
+            # connection drops, and closing the tab leaves the session running there
+    project=${2:?project} host=${3:?host}; dir=$(project_dir "$project") || exit 2
+    if [ -n "${KONSOLE_DBUS_SERVICE:-}" ] && [ -n "${KONSOLE_DBUS_SESSION:-}" ]; then   # as hooks/session-name.sh
+      for ctx in 0 1; do qdbus6 "$KONSOLE_DBUS_SERVICE" "$KONSOLE_DBUS_SESSION" setTabTitleFormat "$ctx" "${project//%/%%}" >/dev/null 2>&1; done
+      color=$(ws_color "$project"); [ -n "$color" ] && "$here/../lib/konsole-color" "$color" >/dev/null 2>&1
+      setsid "$here/../hooks/sort-tabs.sh" </dev/null >/dev/null 2>&1 &
+    fi
+    if live_here "$project"; then echo "$project already runs on this machine; not starting it on $host."; read -r -p "Enter closes this tab. "; exit 3; fi
+    if [ -d "$dir" ]; then   # the host only has what is pushed
+      [ -z "$(git -C "$dir" status --porcelain -- . 2>/dev/null)" ] || echo "note: uncommitted changes in $project are not on $host"
+      git -C "$dir" log --oneline '@{u}..' 2>/dev/null | grep -q . && echo "note: unpushed commits in $project are not on $host"
+    fi
+    rel=$(cd "$here" && pwd); rel=${rel#"$HOME"/}
+    while :; do
+      ssh -t -o ConnectTimeout=10 -o ServerAliveInterval=15 -o ServerAliveCountMax=3 "$host" \
+        "\"\$HOME\"/$(printf %q "$rel")/cockpit host-session $(printf %q "$project")" && code=0 || code=$?
+      [ "$code" -eq 255 ] || break
+      echo "No connection to $host; trying again in 5 s (the session goes on there; closing this tab is fine)."; sleep 5
+    done
+    [ "$code" -eq 0 ] || read -r -p "Ended with code $code. Enter closes this tab. "
+    exit "$code" ;;
+  host-session)   # cockpit host-session <project>: run over ssh by attach: join the project's tmux session, or start it
+    project=${2:?project}; dir=$(project_dir "$project") || exit 2
+    [ -d "$dir" ] || { echo "$project is not on $(uname -n)"; exit 4; }
+    name=cockpit-${project//[\/.:]/-}
+    tmux has-session -t "=$name" 2>/dev/null && exec tmux attach -t "=$name"
+    if live_here "$project"; then echo "$project already runs on $(uname -n), outside tmux; not starting a second one."; exit 3; fi
+    for s in "/run/user/$(id -u)/gcr/ssh" "/run/user/$(id -u)/openssh_agent"; do [ -S "$s" ] && { export SSH_AUTH_SOCK=$s; break; }; done
+    GIT_SSH_COMMAND="ssh -o BatchMode=yes -o ConnectTimeout=5" GIT_TERMINAL_PROMPT=0 timeout 20 git -C "$ws" pull -q --ff-only \
+      || echo "pull failed, running on what is here"
+    sid=   # the conversation left open here, as `cockpit` resumes the root's (~/.cache/claude/open/); never a claude -p task
+    for f in $(ls -t "$odir" 2>/dev/null | sed "s|^|$odir/|"); do
+      [ -f "$f" ] && [ "$(sed -n 1p "$f")" = "$dir" ] || continue
+      [ "$(grep -m1 -o '"entrypoint":"[^"]*"' "$(sed -n 2p "$f")" 2>/dev/null)" = '"entrypoint":"cli"' ] && { sid=$(basename "$f"); break; }
+    done
+    tmux new-session -d -s "$name" -c "$dir" -e COCKPIT_HOSTED=1 -e "SSH_AUTH_SOCK=${SSH_AUTH_SOCK:-}" "$here/cockpit tab $sid" 2>/dev/null || true   # lost a race: join the other one
+    # No prefix key (Claude Code uses Ctrl+B itself; closing the tab is the detach), no status bar, mouse for its panes
+    tmux set -t "=$name:" prefix None \; set -t "=$name:" status off \; set -t "=$name:" mouse on >/dev/null 2>&1 || true
+    exec tmux attach -t "=$name" ;;
+esac
 
 # Running sessions: Claude Code's own registry (~/.claude/sessions/<pid>.json, written at start), live pid only.
 # Sessions this command launched in the last minute count as running too (not registered yet), so starting
@@ -53,7 +123,7 @@ if [ "${1:-}" = list ]; then
   for t in "${tabs[@]}"; do IFS='|' read -r n d s <<<"$t"; echo "$n  ${s:-(new session)}"; done
   exit 0
 fi
-[ -z "${1:-}" ] || { sed -n '8,9s/^# //p' "$0" >&2; exit 2; }
+[ -z "${1:-}" ] || { sed -n '8,11s/^# //p' "$0" >&2; exit 2; }
 
 if [ ${#tabs[@]} -gt 0 ]; then
   # The first tab is the window's own (-e), the others come from a tabs file (else Konsole adds a plain shell tab)
