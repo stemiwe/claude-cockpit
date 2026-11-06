@@ -11,6 +11,12 @@ installed for (where `cockpit/` and `cockpit.json` are).
   counted toward its ancestor at that depth (`code/shop`), whose `CLAUDE.md` then holds the `Status:` line.
   Every project `CLAUDE.md` starts with a **`Status:` line** right under its title:
   one short line on where the project stands now. Update it whenever that changes; the dashboard shows it.
+  Below it, a **`## Open` section**: the project's important points now (next steps, open decisions, blockers, key
+  facts to keep in mind), 3–8 short bullets, newest state only, no log or history. Keep it current as work goes
+  on; the work pane beside the chat shows it.
+  Below that, a **`## Setup` section** (also in the work pane): how this project's session works and every outside
+  system involved, each with where it is: jobs, servers, domains, accounts, APIs, other sessions it depends on. Short
+  bullets, no secrets. Update it when any of that changes; a session whose `CLAUDE.md` lacks it adds it.
   **Archiving**: a finished project gets `Status: archived YYYY-MM-DD — <one line on the outcome>`. It stays
   where it is; the dashboard lists it dimmed at the end of its category tab and its jobs stop. Remove the word to bring it back.
 - **C2. Session names and tab colours.** Session name = folder path relative to the workspace, at most

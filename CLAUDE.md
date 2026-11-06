@@ -6,6 +6,8 @@ Status: dashboard, tabs, hooks, job runner (needs/takeover), per-session models;
 - Live state (`.cockpit/questions`, job-host heartbeat) still in the workspace repo: move to presence branches
 - Konsole `--desktopfile` no longer sets the app id: KWin rules (install.sh) cover it
 
+## Setup
+
 The generic cockpit for running Claude Code sessions per project in Konsole tabs: the dashboard TUI, the hooks,
 the status line and the job runner. The rules the sessions follow are a separate repo (`<workspace>/rules/`,
 installed by `install.sh`). What it does, its layout and how to
